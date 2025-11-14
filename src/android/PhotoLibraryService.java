@@ -203,8 +203,12 @@ public class PhotoLibraryService {
       public void run(String filePath) {
         try {
           // Find the saved image in the library and return it as libraryItem
+          /*
           String whereClause = MediaStore.MediaColumns.DATA + " = \"" + filePath + "\"";
           queryLibrary(context, whereClause, new ChunkResultRunnable() {
+          */
+          // // The following line of code is for fixing java.lang.IllegalArgumentException: Invalid token /storage/emulated/0/Pictures/*/*.jpg
+          queryLibrary(context, filePath, new ChunkResultRunnable() {
             @Override
             public void run(ArrayList<JSONObject> chunk, int chunkNum, boolean isLastChunk) {
               completion.run(chunk.size() == 1 ? chunk.get(0) : null);
@@ -273,55 +277,68 @@ public class PhotoLibraryService {
 
     while (iteratorFields.hasNext()) {
       String column = iteratorFields.next();
-
       columnNames.add(column);
       columnValues.add("" + columns.getString(column));
     }
 
     final String sortOrder = MediaStore.Images.Media.DATE_TAKEN + " DESC";
 
-    final Cursor cursor = context.getContentResolver().query(
-      collection,
-      columnValues.toArray(new String[columns.length()]),
-      whereClause, null, sortOrder);
+    //    final Cursor cursor = context.getContentResolver().query(
+    //      collection,
+    //      columnValues.toArray(new String[columns.length()]),
+    //      whereClause, null, sortOrder);
+    // The following code snippet is for fixing java.lang.IllegalArgumentException: Invalid token /storage/emulated/0/Pictures/*/*.jpg
 
+    String selection = MediaStore.Images.Media.DATA + "=?";
     final ArrayList<JSONObject> buffer = new ArrayList<JSONObject>();
+    try {
+      final Cursor cursor = context.getContentResolver().query(
+              collection,
+              columnValues.toArray(new String[columns.length()]),
+              selection, new String[]{whereClause}, sortOrder);
 
-    if (cursor.moveToFirst()) {
-      do {
-        JSONObject item = new JSONObject();
+      if (cursor.moveToFirst()) {
+        do {
+          JSONObject item = new JSONObject();
 
-        for (String column : columnNames) {
-          int columnIndex = cursor.getColumnIndex(columns.get(column).toString());
+          for (String column : columnNames) {
+            int columnIndex = cursor.getColumnIndex(columns.get(column).toString());
 
-          if (column.startsWith("int.")) {
-            item.put(column.substring(4), cursor.getInt(columnIndex));
-            if (column.substring(4).equals("width") && item.getInt("width") == 0) {
-              System.err.println("cursor: " + cursor.getInt(columnIndex));
+            if (column.startsWith("int.")) {
+              item.put(column.substring(4), cursor.getInt(columnIndex));
+              if (column.substring(4).equals("width") && item.getInt("width") == 0) {
+                System.err.println("cursor: " + cursor.getInt(columnIndex));
+              }
+            } else if (column.startsWith("float.")) {
+              item.put(column.substring(6), cursor.getFloat(columnIndex));
+            } else if (column.startsWith("date.")) {
+              long intDate = cursor.getLong(columnIndex);
+              Date date = new Date(intDate);
+              item.put(column.substring(5), dateFormatter.format(date));
+            } else {
+              item.put(column, cursor.getString(columnIndex));
             }
-          } else if (column.startsWith("float.")) {
-            item.put(column.substring(6), cursor.getFloat(columnIndex));
-          } else if (column.startsWith("date.")) {
-            long intDate = cursor.getLong(columnIndex);
-            Date date = new Date(intDate);
-            item.put(column.substring(5), dateFormatter.format(date));
-          } else {
-            item.put(column, cursor.getString(columnIndex));
           }
+          buffer.add(item);
+
+          // TODO: return partial result
+
         }
-        buffer.add(item);
-
-        // TODO: return partial result
-
+        while (cursor.moveToNext());
       }
-      while (cursor.moveToNext());
+      cursor.close();
+
+    } catch (Exception e) {
+      e.printStackTrace();
+      return null;
     }
-
-    cursor.close();
-
     return buffer;
-
   }
+
+
+
+
+
 
   private void queryLibrary(Context context, String whereClause, ChunkResultRunnable completion) throws JSONException {
     queryLibrary(context, 0, 0, false, whereClause, completion);
@@ -341,6 +358,7 @@ public class PhotoLibraryService {
       put("date.creationDate", MediaStore.Images.ImageColumns.DATE_TAKEN);
       put("float.latitude", MediaStore.Images.ImageColumns.LATITUDE);
       put("float.longitude", MediaStore.Images.ImageColumns.LONGITUDE);
+      put("mime_type", MediaStore.Images.ImageColumns.MIME_TYPE);
       put("nativeURL", MediaStore.MediaColumns.DATA); // will not be returned to javascript
     }};
 
@@ -371,8 +389,8 @@ public class PhotoLibraryService {
           queryResult.get("id") + ";" +
           queryResult.get("nativeURL"));
 
-      queryResult.remove("nativeURL"); // Not needed
-
+      //queryResult.remove("nativeURL"); // Not needed
+      queryResult.put("nativeURL", queryResult.get("nativeURL"));
       String albumId = queryResult.getString("albumId");
       queryResult.remove("albumId");
       if (includeAlbumData) {
